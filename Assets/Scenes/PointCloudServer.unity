@@ -309,7 +309,7 @@ GameObject:
   - component: {fileID: 652584674}
   - component: {fileID: 652584673}
   m_Layer: 0
-  m_Name: Kinect
+  m_Name: KinectManager
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -341,6 +341,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: b4c9fe985d63ba74ab55f9606cef4357, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  _peerConnection: {fileID: 722794974}
 --- !u!23 &652584674
 MeshRenderer:
   m_ObjectHideFlags: 0
@@ -433,15 +434,7 @@ MonoBehaviour:
   OnError:
     m_PersistentCalls:
       m_Calls: []
-  _mediaLines:
-  - _mediaKind: 0
-    _source: {fileID: 0}
-    _receiver: {fileID: 0}
-    _senderTrackName: microphone_track
-  - _mediaKind: 1
-    _source: {fileID: 0}
-    _receiver: {fileID: 0}
-    _senderTrackName: webcam_track
+  _mediaLines: []
 --- !u!4 &722794975
 Transform:
   m_ObjectHideFlags: 0
