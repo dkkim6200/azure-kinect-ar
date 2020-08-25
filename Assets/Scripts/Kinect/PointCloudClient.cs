@@ -11,6 +11,7 @@ namespace DKDevelopment.AzureKinect.Client
     public class PointCloudClient : MonoBehaviour
     {
         public PeerConnection _peerConnection;
+        private Microsoft.MixedReality.WebRTC.DataChannel _dataChannel;
 
         // private static readonly int NUM_FLOATS_PER_VECTOR = 3;
         // private static readonly int NUM_BYTES_PER_COLOR = 4;
@@ -30,6 +31,17 @@ namespace DKDevelopment.AzureKinect.Client
 
         private void Start()
         {
+        }
+
+        public void StartPointCloud()
+        {
+            Task t = StartPointCloudAsync();
+        }
+
+        private async Task StartPointCloudAsync()
+        {
+            _dataChannel = await _peerConnection.Peer.AddDataChannelAsync(42, "PointCloud", false, false);
+            _dataChannel.MessageReceived += OnKinectMessageReceived;
         }
 
         private void InitPointCloud(int num)
@@ -60,7 +72,7 @@ namespace DKDevelopment.AzureKinect.Client
             pointCloudInitialized = true;
         }
 
-        private void KinectMessageReceived(byte[] data)
+        private void OnKinectMessageReceived(byte[] data)
         {
             if (!pointCloudInitialized)
             {
