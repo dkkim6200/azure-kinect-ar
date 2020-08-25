@@ -1,6 +1,7 @@
 ﻿using Microsoft.Azure.Kinect.Sensor;
 using System.Collections;
 using System.Collections.Generic;
+using System.Collections.Concurrent;
 using System.Threading.Tasks;
 using UnityEngine;
 using Microsoft.MixedReality.WebRTC.Unity;
@@ -10,14 +11,16 @@ namespace DKDevelopment.AzureKinect.Client
 {
     public class PointCloudClient : MonoBehaviour
     {
+        private ConcurrentQueue<Action> _mainThreadWorkQueue;
         public PeerConnection _peerConnection;
         private Microsoft.MixedReality.WebRTC.DataChannel _dataChannel;
 
         // private static readonly int NUM_FLOATS_PER_VECTOR = 3;
         // private static readonly int NUM_BYTES_PER_COLOR = 4;
         private static readonly int NUM_BYTES_PER_FLOAT = 4;
+        private static readonly int WEBRTC_MESSAGE_SIZE = 262528;
 
-        private int numPoints;
+        private int numPoints = -1;
         //Used to draw a set of points
         private Mesh mesh;
         //Array of coordinates for each point in PointCloud
@@ -29,19 +32,35 @@ namespace DKDevelopment.AzureKinect.Client
 
         private bool pointCloudInitialized;
 
+        private byte[] unfragData;
+        private int unfragDataIndex;
+
         private void Start()
         {
+            _mainThreadWorkQueue = new ConcurrentQueue<Action>();
+            unfragData = new byte[WEBRTC_MESSAGE_SIZE * 23];
+            unfragDataIndex = 0;
+
+            _peerConnection.OnInitialized.AddListener(() => {
+                _peerConnection.Peer.AddDataChannelAsync("chat", true, true);
+                _peerConnection.Peer.DataChannelAdded += OnDataChannelAdded;
+            });
         }
 
         public void StartPointCloud()
         {
-            Task t = StartPointCloudAsync();
+            _peerConnection.StartConnection();
         }
 
-        private async Task StartPointCloudAsync()
+        public void OnDataChannelAdded(Microsoft.MixedReality.WebRTC.DataChannel channel)
         {
-            _dataChannel = await _peerConnection.Peer.AddDataChannelAsync(42, "PointCloud", false, false);
-            _dataChannel.MessageReceived += OnKinectMessageReceived;
+            Debug.Log("OnDataChannelAdded");
+            _mainThreadWorkQueue.Enqueue(() =>
+            {
+                _dataChannel = channel;
+                _dataChannel.MessageReceived += OnKinectMessageReceived;
+                Debug.Log("OnDataChannelAdded Main Thread");
+            });
         }
 
         private void InitPointCloud(int num)
@@ -74,43 +93,78 @@ namespace DKDevelopment.AzureKinect.Client
 
         private void OnKinectMessageReceived(byte[] data)
         {
-            if (!pointCloudInitialized)
-            {
-                InitPointCloud(BitConverter.ToInt32(data, 0));
-            }
+            Debug.Log("Received data of length " + data.Length);
 
-            int index = 4;
+            _mainThreadWorkQueue.Enqueue(() => {
+                if (unfragDataIndex < 22)
+                {
+                    if (unfragDataIndex == 0 && numPoints < 0)
+                    {
+                        numPoints = BitConverter.ToInt32(data, 0);
+                    }
+                    
+                    if (unfragDataIndex == 0)
+                    {
+                        Debug.LogError(BitConverter.ToInt32(data, 0));
+                    }
 
-            for (int i = 0; i < numPoints; i++)
-            {
-                vertices[i].x = BitConverter.ToSingle(data, index);
-                index += NUM_BYTES_PER_FLOAT;
-                vertices[i].y = BitConverter.ToSingle(data, index);
-                index += NUM_BYTES_PER_FLOAT;
-                vertices[i].z = BitConverter.ToSingle(data, index);
-                index += NUM_BYTES_PER_FLOAT;
-            }
+                    Buffer.BlockCopy(data, 0, unfragData, unfragDataIndex * WEBRTC_MESSAGE_SIZE, WEBRTC_MESSAGE_SIZE);
+                    unfragDataIndex++;
 
-            for (int i = 0; i < numPoints; i++)
-            {
-                colors[i].b = data[index];
-                index++;
-                colors[i].g = data[index];
-                index++;
-                colors[i].r = data[index];
-                index++;
-                colors[i].a = data[index];
-                index++;
-            }
+                    return;
+                }
 
-            mesh.vertices = vertices;
-            mesh.colors32 = colors;
-            mesh.RecalculateBounds();
+                if (!pointCloudInitialized)
+                {
+                    InitPointCloud(numPoints);
+                }
+
+                int index = 4;
+
+                try {
+                    for (int i = 0; i < numPoints; i++)
+                    {
+                        vertices[i].x = BitConverter.ToSingle(unfragData, index);
+                        index += NUM_BYTES_PER_FLOAT;
+                        vertices[i].y = BitConverter.ToSingle(unfragData, index);
+                        index += NUM_BYTES_PER_FLOAT;
+                        vertices[i].z = BitConverter.ToSingle(unfragData, index);
+                        index += NUM_BYTES_PER_FLOAT;
+                    }
+
+                    for (int i = 0; i < numPoints; i++)
+                    {
+                        colors[i].b = unfragData[index];
+                        index++;
+                        colors[i].g = unfragData[index];
+                        index++;
+                        colors[i].r = unfragData[index];
+                        index++;
+                        colors[i].a = unfragData[index];
+                        index++;
+                    }
+                }
+                catch (IndexOutOfRangeException e)
+                {
+                    Debug.LogError(e);
+                    Debug.LogError("Index: " + index + ", numPoints: " + numPoints);
+                }
+
+                mesh.vertices = vertices;
+                mesh.colors32 = colors;
+                mesh.RecalculateBounds();
+
+                unfragDataIndex = 0;
+            });
         }
-        
-        private void OnDestroy()
+
+        private void Update()
         {
-            
+            // Execute any pending work enqueued by background tasks
+            while (_mainThreadWorkQueue.TryDequeue(out Action workload))
+            {
+                workload();
+            }
         }
     }
 }

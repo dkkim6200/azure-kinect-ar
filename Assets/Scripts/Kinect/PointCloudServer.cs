@@ -14,6 +14,7 @@ namespace DKDevelopment.AzureKinect.Server
         private static readonly int NUM_FLOATS_PER_VECTOR = 3;
         private static readonly int NUM_BYTES_PER_COLOR = 4;
         private static readonly int NUM_BYTES_PER_FLOAT = 4;
+        private static readonly int WEBRTC_MESSAGE_SIZE = 262528;
 
         public PeerConnection _peerConnection;
         private Microsoft.MixedReality.WebRTC.DataChannel _dataChannel;
@@ -35,40 +36,38 @@ namespace DKDevelopment.AzureKinect.Server
         
         // Byte array for Kinect data to send over to clients
         private byte[] webRTCData;
+        private int webRTCDataBufferIndex = Int32.MaxValue;
+        private byte[] fragBuffer;
         private float[] verticesRaw;
 
-        private Thread _mainThread;
+        private ulong bufferedAmount;
 
         private void Start()
         {
-            _mainThread = Thread.CurrentThread;
-
             //The method to initialize Kinect
             InitKinect();
             //Initialization for point cloud rendering
             InitMesh();
         }
 
-        private void SetDataChannel(Microsoft.MixedReality.WebRTC.DataChannel channel)
-        {
-            _dataChannel = channel;
-        }
-
         public void StartKinect()
         {
-            _peerConnection.Peer.AddDataChannelAsync(42, "chat", true, true).ContinueWith((prevTask) =>
-            { 
-                if (prevTask.Exception != null)
-                {
-                    throw prevTask.Exception;
-                }
-                var newDataChannel = prevTask.Result;
-
-                SetDataChannel(newDataChannel);
-            });
+            _peerConnection.Peer.DataChannelAdded += OnDataChannelAdded;
 
             //Loop to get data from Kinect and rendering
             Task t = KinectLoop();
+        }
+
+        public void OnDataChannelAdded(Microsoft.MixedReality.WebRTC.DataChannel channel)
+        {
+            _dataChannel = channel;
+            _dataChannel.BufferingChanged += OnBufferingChanged;
+            Debug.Log("OnDataChannelAdded");
+        }
+
+        private void OnBufferingChanged(ulong previous, ulong current, ulong limit)
+        {
+            bufferedAmount = previous + current;
         }
 
         //Initialization of Kinect
@@ -121,7 +120,9 @@ namespace DKDevelopment.AzureKinect.Server
 
             if (webRTCData == null)
             {
-                webRTCData = new byte[4 + (numPoints * NUM_FLOATS_PER_VECTOR * NUM_BYTES_PER_FLOAT) + (numPoints * NUM_BYTES_PER_COLOR)];
+                // 4 + (numPoints * NUM_FLOATS_PER_VECTOR * NUM_BYTES_PER_FLOAT) + (numPoints * NUM_BYTES_PER_COLOR)
+                webRTCData = new byte[WEBRTC_MESSAGE_SIZE * 23];
+                fragBuffer = new byte[WEBRTC_MESSAGE_SIZE];
                 verticesRaw = new float[numPoints * NUM_FLOATS_PER_VECTOR];
             }
         }
@@ -155,49 +156,55 @@ namespace DKDevelopment.AzureKinect.Server
                     mesh.vertices = vertices;
                     mesh.colors32 = colors;
                     mesh.RecalculateBounds();
-
-                    Debug.Log(_dataChannel);
-
-                    if (_dataChannel != null && _dataChannel.State == Microsoft.MixedReality.WebRTC.DataChannel.ChannelState.Open)
-                    {
-                        int index = 0;
-
-                        BitConverter.GetBytes(numPoints).CopyTo(webRTCData, index);
-                        index += 4; // number of bytes per int
-
-                        for (int i = 0; i < numPoints; i++)
-                        {
-                            verticesRaw[i * NUM_FLOATS_PER_VECTOR] = vertices[i].x;
-                            verticesRaw[i * NUM_FLOATS_PER_VECTOR + 1] = vertices[i].y;
-                            verticesRaw[i * NUM_FLOATS_PER_VECTOR + 2] = vertices[i].z;
-                        }
-
-                        Buffer.BlockCopy(verticesRaw, 0, webRTCData, index, numPoints * NUM_FLOATS_PER_VECTOR * NUM_BYTES_PER_FLOAT);
-                        index += numPoints * NUM_FLOATS_PER_VECTOR * NUM_BYTES_PER_FLOAT;
-
-                        for (int i = 0; i < numPoints; i++)
-                        {
-                            webRTCData[index] = colors[i].b;
-                            index++; // Only one byte per field
-                            webRTCData[index] = colors[i].g;
-                            index++;
-                            webRTCData[index] = colors[i].r;
-                            index++;
-                            webRTCData[index] = colors[i].a;
-                            index++;
-                        }
-
-                        _dataChannel.SendMessage(webRTCData);
-                    }
                 }
             }
         }
 
-        private void CopyBytes(byte[] source, byte[] destination, int index, int length)
+        private void Update()
         {
-            for (int i = 0; i < length; i++)
+            if (_dataChannel != null && _dataChannel.State == Microsoft.MixedReality.WebRTC.DataChannel.ChannelState.Open)
             {
-                destination[index + i] = source[i];
+                if (webRTCDataBufferIndex < webRTCData.Length)
+                {
+                    if (bufferedAmount <= 0)
+                    {
+                        Buffer.BlockCopy(webRTCData, webRTCDataBufferIndex, fragBuffer, 0, WEBRTC_MESSAGE_SIZE);
+                        _dataChannel.SendMessage(fragBuffer);
+                        webRTCDataBufferIndex += WEBRTC_MESSAGE_SIZE;
+                    }
+
+                    return;
+                }
+
+                int index = 0;
+
+                BitConverter.GetBytes(numPoints).CopyTo(webRTCData, index);
+                Buffer.BlockCopy(BitConverter.GetBytes(numPoints), 0, webRTCData, index, 4);
+                index += 4; // number of bytes per int
+
+                for (int i = 0; i < numPoints; i++)
+                {
+                    verticesRaw[i * NUM_FLOATS_PER_VECTOR] = vertices[i].x;
+                    verticesRaw[i * NUM_FLOATS_PER_VECTOR + 1] = vertices[i].y;
+                    verticesRaw[i * NUM_FLOATS_PER_VECTOR + 2] = vertices[i].z;
+                }
+
+                Buffer.BlockCopy(verticesRaw, 0, webRTCData, index, numPoints * NUM_FLOATS_PER_VECTOR * NUM_BYTES_PER_FLOAT);
+                index += numPoints * NUM_FLOATS_PER_VECTOR * NUM_BYTES_PER_FLOAT;
+
+                for (int i = 0; i < numPoints; i++)
+                {
+                    webRTCData[index] = colors[i].b;
+                    index++; // Only one byte per field
+                    webRTCData[index] = colors[i].g;
+                    index++;
+                    webRTCData[index] = colors[i].r;
+                    index++;
+                    webRTCData[index] = colors[i].a;
+                    index++;
+                }
+                
+                webRTCDataBufferIndex = 0;
             }
         }
 
