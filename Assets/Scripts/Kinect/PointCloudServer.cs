@@ -14,7 +14,7 @@ namespace DKDevelopment.AzureKinect.Server
         private static readonly int NUM_FLOATS_PER_VECTOR = 3;
         private static readonly int NUM_BYTES_PER_COLOR = 4;
         private static readonly int NUM_BYTES_PER_FLOAT = 4;
-        private static readonly int WEBRTC_MESSAGE_SIZE = 262528;
+        private static readonly int WEBRTC_MESSAGE_SIZE = 131264; // Real limit is 262528
 
         public PeerConnection _peerConnection;
         private Microsoft.MixedReality.WebRTC.DataChannel _dataChannel;
@@ -40,7 +40,10 @@ namespace DKDevelopment.AzureKinect.Server
         private byte[] fragBuffer;
         private float[] verticesRaw;
 
-        private ulong bufferedAmount;
+        private float bufferLimit = Single.PositiveInfinity;
+        private float currentBufferedAmount;
+
+        private bool canUpdatePointCloud;
 
         private void Start()
         {
@@ -67,7 +70,9 @@ namespace DKDevelopment.AzureKinect.Server
 
         private void OnBufferingChanged(ulong previous, ulong current, ulong limit)
         {
-            bufferedAmount = previous + current;
+            currentBufferedAmount = current;
+            bufferLimit = limit;
+            Debug.LogError("OnBufferingChanged");
         }
 
         //Initialization of Kinect
@@ -121,7 +126,7 @@ namespace DKDevelopment.AzureKinect.Server
             if (webRTCData == null)
             {
                 // 4 + (numPoints * NUM_FLOATS_PER_VECTOR * NUM_BYTES_PER_FLOAT) + (numPoints * NUM_BYTES_PER_COLOR)
-                webRTCData = new byte[WEBRTC_MESSAGE_SIZE * 23];
+                webRTCData = new byte[WEBRTC_MESSAGE_SIZE * 46];
                 fragBuffer = new byte[WEBRTC_MESSAGE_SIZE];
                 verticesRaw = new float[numPoints * NUM_FLOATS_PER_VECTOR];
             }
@@ -133,6 +138,9 @@ namespace DKDevelopment.AzureKinect.Server
             {
                 using (Capture capture = await Task.Run(() => kinect.GetCapture()).ConfigureAwait(true))
                 {
+                    if (!canUpdatePointCloud)
+                        continue;
+
                     //Getting color information
                     Image colorImage = transformation.ColorImageToDepthCamera(capture);
                     BGRA[] colorArray = colorImage.GetPixels<BGRA>().ToArray();
@@ -156,17 +164,23 @@ namespace DKDevelopment.AzureKinect.Server
                     mesh.vertices = vertices;
                     mesh.colors32 = colors;
                     mesh.RecalculateBounds();
+
+                    canUpdatePointCloud = false;
                 }
             }
         }
 
         private void Update()
         {
-            if (_dataChannel != null && _dataChannel.State == Microsoft.MixedReality.WebRTC.DataChannel.ChannelState.Open)
+            if (_dataChannel != null)
+            {
+                Debug.LogError("========= currentBufferedAmount: " + currentBufferedAmount + ", bufferLimit: " + bufferLimit);
+            }
+            if (_dataChannel != null && _dataChannel.State == Microsoft.MixedReality.WebRTC.DataChannel.ChannelState.Open && !canUpdatePointCloud)
             {
                 if (webRTCDataBufferIndex < webRTCData.Length)
                 {
-                    if (bufferedAmount <= 0)
+                    if (currentBufferedAmount + WEBRTC_MESSAGE_SIZE < bufferLimit)
                     {
                         Buffer.BlockCopy(webRTCData, webRTCDataBufferIndex, fragBuffer, 0, WEBRTC_MESSAGE_SIZE);
                         _dataChannel.SendMessage(fragBuffer);
@@ -174,6 +188,12 @@ namespace DKDevelopment.AzureKinect.Server
                     }
 
                     return;
+                }
+                
+                if (webRTCDataBufferIndex != Int32.MaxValue)
+                {
+                    byte[] endIndicator = { 0x42 };
+                    _dataChannel.SendMessage(endIndicator);
                 }
 
                 int index = 0;
@@ -205,6 +225,8 @@ namespace DKDevelopment.AzureKinect.Server
                 }
                 
                 webRTCDataBufferIndex = 0;
+                canUpdatePointCloud = true;
+                Debug.LogError("Entered fourth");
             }
         }
 

@@ -18,7 +18,7 @@ namespace DKDevelopment.AzureKinect.Client
         // private static readonly int NUM_FLOATS_PER_VECTOR = 3;
         // private static readonly int NUM_BYTES_PER_COLOR = 4;
         private static readonly int NUM_BYTES_PER_FLOAT = 4;
-        private static readonly int WEBRTC_MESSAGE_SIZE = 262528;
+        private static readonly int WEBRTC_MESSAGE_SIZE = 131264;
 
         private int numPoints = -1;
         //Used to draw a set of points
@@ -38,7 +38,7 @@ namespace DKDevelopment.AzureKinect.Client
         private void Start()
         {
             _mainThreadWorkQueue = new ConcurrentQueue<Action>();
-            unfragData = new byte[WEBRTC_MESSAGE_SIZE * 23];
+            unfragData = new byte[WEBRTC_MESSAGE_SIZE * 47];
             unfragDataIndex = 0;
 
             _peerConnection.OnInitialized.AddListener(() => {
@@ -96,9 +96,9 @@ namespace DKDevelopment.AzureKinect.Client
             Debug.Log("Received data of length " + data.Length);
 
             _mainThreadWorkQueue.Enqueue(() => {
-                if (unfragDataIndex < 22)
+                if (data.Length == WEBRTC_MESSAGE_SIZE)
                 {
-                    if (unfragDataIndex == 0 && numPoints < 0)
+                    if (unfragDataIndex == 0 && numPoints <= 0)
                     {
                         numPoints = BitConverter.ToInt32(data, 0);
                     }
@@ -114,8 +114,14 @@ namespace DKDevelopment.AzureKinect.Client
                     return;
                 }
 
+                if (data.Length != 1)
+                {
+                    return;
+                }
+
                 if (!pointCloudInitialized)
                 {
+                    Debug.LogError(numPoints);
                     InitPointCloud(numPoints);
                 }
 
