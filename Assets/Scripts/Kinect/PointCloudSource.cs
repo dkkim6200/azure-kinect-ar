@@ -4,19 +4,21 @@ using System.Collections.Generic;
 using System.Threading.Tasks;
 using UnityEngine;
 using Microsoft.MixedReality.WebRTC.Unity;
+using Microsoft.MixedReality.WebRTC;
 using System;
 using System.Threading;
+using System.Runtime.InteropServices;
 
 namespace DKDevelopment.AzureKinect.Server
 {
-    public class PointCloudServer : MonoBehaviour
+    public class PointCloudSource : CustomVideoSource<Argb32VideoFrameStorage>
     {
         private static readonly int NUM_FLOATS_PER_VECTOR = 3;
         private static readonly int NUM_BYTES_PER_COLOR = 4;
         private static readonly int NUM_BYTES_PER_FLOAT = 4;
         private static readonly int WEBRTC_MESSAGE_SIZE = 131264; // Real limit is 262528
 
-        public PeerConnection _peerConnection;
+        public Microsoft.MixedReality.WebRTC.Unity.PeerConnection _peerConnection;
         private Microsoft.MixedReality.WebRTC.DataChannel _dataChannel;
 
         //Variable for handling Kinect
@@ -34,16 +36,17 @@ namespace DKDevelopment.AzureKinect.Server
         //Class for coordinate transformation(e.g.Color-to-depth, depth-to-xyz, etc.)
         private Transformation transformation;
         
-        // Byte array for Kinect data to send over to clients
-        private byte[] webRTCData;
-        private int webRTCDataBufferIndex = Int32.MaxValue;
-        private byte[] fragBuffer;
-        private float[] verticesRaw;
+        private Image _colorImage;
+        private Image _depthImage;
+        private Image _testImage;
 
-        private float bufferLimit = Single.PositiveInfinity;
-        private float currentBufferedAmount;
+        private int[] _colorImageIntArray;
+        private IntPtr _colorImageDataBuffer;
+        private int[] _depthImageIntArray;
+        private IntPtr _depthImageDataBuffer;
 
-        private bool canUpdatePointCloud;
+        private int[] _testImageIntArray;
+        private IntPtr _testImageDataBuffer;
 
         private void Start()
         {
@@ -64,15 +67,7 @@ namespace DKDevelopment.AzureKinect.Server
         public void OnDataChannelAdded(Microsoft.MixedReality.WebRTC.DataChannel channel)
         {
             _dataChannel = channel;
-            _dataChannel.BufferingChanged += OnBufferingChanged;
             Debug.Log("OnDataChannelAdded");
-        }
-
-        private void OnBufferingChanged(ulong previous, ulong current, ulong limit)
-        {
-            currentBufferedAmount = current;
-            bufferLimit = limit;
-            Debug.LogError("OnBufferingChanged");
         }
 
         //Initialization of Kinect
@@ -122,14 +117,13 @@ namespace DKDevelopment.AzureKinect.Server
             mesh.SetIndices(indices, MeshTopology.Points, 0);
 
             gameObject.GetComponent<MeshFilter>().mesh = mesh;
-
-            if (webRTCData == null)
-            {
-                // 4 + (numPoints * NUM_FLOATS_PER_VECTOR * NUM_BYTES_PER_FLOAT) + (numPoints * NUM_BYTES_PER_COLOR)
-                webRTCData = new byte[WEBRTC_MESSAGE_SIZE * 46];
-                fragBuffer = new byte[WEBRTC_MESSAGE_SIZE];
-                verticesRaw = new float[numPoints * NUM_FLOATS_PER_VECTOR];
-            }
+            
+            _colorImageIntArray = new int[width * height];
+            _colorImageDataBuffer = Marshal.AllocHGlobal(width * height * 4);
+            _depthImageIntArray = new int[width * height];
+            _depthImageDataBuffer = Marshal.AllocHGlobal(width * height * 4);
+            _depthImageIntArray = new int[kinect.GetCalibration().ColorCameraCalibration.ResolutionWidth * kinect.GetCalibration().ColorCameraCalibration.ResolutionHeight];
+            _depthImageDataBuffer = Marshal.AllocHGlobal(kinect.GetCalibration().ColorCameraCalibration.ResolutionWidth * kinect.GetCalibration().ColorCameraCalibration.ResolutionHeight * 4);
         }
 
         private async Task KinectLoop()
@@ -138,16 +132,15 @@ namespace DKDevelopment.AzureKinect.Server
             {
                 using (Capture capture = await Task.Run(() => kinect.GetCapture()).ConfigureAwait(true))
                 {
-                    if (!canUpdatePointCloud)
-                        continue;
-
                     //Getting color information
-                    Image colorImage = transformation.ColorImageToDepthCamera(capture);
-                    BGRA[] colorArray = colorImage.GetPixels<BGRA>().ToArray();
+                    _colorImage = transformation.ColorImageToDepthCamera(capture);
+                    BGRA[] colorArray = _colorImage.GetPixels<BGRA>().ToArray();
 
                     //Getting vertices of point cloud
-                    Image xyzImage = transformation.DepthImageToPointCloud(capture.Depth);
-                    Short3[] xyzArray = xyzImage.GetPixels<Short3>().ToArray();
+                    _depthImage = transformation.DepthImageToPointCloud(capture.Depth);
+                    Short3[] xyzArray = _depthImage.GetPixels<Short3>().ToArray();
+
+                    _testImage = transformation.DepthImageToColorCamera(capture);
 
                     for (int i = 0; i < numPoints; i++)
                     {
@@ -164,70 +157,54 @@ namespace DKDevelopment.AzureKinect.Server
                     mesh.vertices = vertices;
                     mesh.colors32 = colors;
                     mesh.RecalculateBounds();
-
-                    canUpdatePointCloud = false;
                 }
             }
         }
 
-        private void Update()
+        protected override void OnFrameRequested(in FrameRequest request)
         {
-            if (_dataChannel != null)
+            if (_colorImage == null || _depthImage == null || _testImage == null)
+                return;
+
+            for (int i = 0; i < _testImage.HeightPixels; i++)
             {
-                Debug.LogError("========= currentBufferedAmount: " + currentBufferedAmount + ", bufferLimit: " + bufferLimit);
+                for (int j = 0; j < _testImage.WidthPixels; j++)
+                {
+                    // _colorImageIntArray[i * _colorImage.WidthPixels + j] = _colorImage.GetPixel<BGRA>(i, j).Value;
+                    
+                    // int xComp = Convert.ToSByte((float) _depthImage.GetPixel<Short3>(i, j).X * -256f / _colorImage.WidthPixels);
+                    // int yComp = Convert.ToSByte((float) _depthImage.GetPixel<Short3>(i, j).Y * -256f / _colorImage.HeightPixels);
+                    // int zComp = Convert.ToSByte((float) _depthImage.GetPixel<Short3>(i, j).Z * 256f / 6000f);
+                    // int depthValue = (xComp << 4) | (yComp << 2) | (zComp); // ARGB = 0XYZ;
+                    // _depthImageIntArray[i * _colorImage.WidthPixels + j] = depthValue;
+
+                    _testImageIntArray[i * _testImage.WidthPixels + j] = _testImage.GetPixel<BGRA>(i, j).Value;
+                }
             }
-            if (_dataChannel != null && _dataChannel.State == Microsoft.MixedReality.WebRTC.DataChannel.ChannelState.Open && !canUpdatePointCloud)
-            {
-                if (webRTCDataBufferIndex < webRTCData.Length)
-                {
-                    if (currentBufferedAmount + WEBRTC_MESSAGE_SIZE < bufferLimit)
-                    {
-                        Buffer.BlockCopy(webRTCData, webRTCDataBufferIndex, fragBuffer, 0, WEBRTC_MESSAGE_SIZE);
-                        _dataChannel.SendMessage(fragBuffer);
-                        webRTCDataBufferIndex += WEBRTC_MESSAGE_SIZE;
-                    }
+            
+            // Marshal.Copy(_colorImageIntArray, 0, _colorImageDataBuffer, _colorImageIntArray.Length);
+            // Marshal.Copy(_depthImageIntArray, 0, _depthImageDataBuffer, _depthImageIntArray.Length);
+            Marshal.Copy(_testImageIntArray, 0, _testImageDataBuffer, _testImageIntArray.Length);
 
-                    return;
-                }
-                
-                if (webRTCDataBufferIndex != Int32.MaxValue)
-                {
-                    byte[] endIndicator = { 0x42 };
-                    _dataChannel.SendMessage(endIndicator);
-                }
+            // Argb32VideoFrame colorFrame = new Argb32VideoFrame();
+            // colorFrame.data = _colorImageDataBuffer;
+            // colorFrame.width = (uint) _colorImage.WidthPixels;
+            // colorFrame.height = (uint) _colorImage.HeightPixels;
+            // colorFrame.stride = _colorImage.StrideBytes;
 
-                int index = 0;
+            // Argb32VideoFrame depthFrame = new Argb32VideoFrame();
+            // depthFrame.data = _depthImageDataBuffer;
+            // depthFrame.width = (uint) _depthImage.WidthPixels;
+            // depthFrame.width = (uint) _depthImage.HeightPixels;
+            // depthFrame.stride = _depthImage.StrideBytes;
 
-                BitConverter.GetBytes(numPoints).CopyTo(webRTCData, index);
-                Buffer.BlockCopy(BitConverter.GetBytes(numPoints), 0, webRTCData, index, 4);
-                index += 4; // number of bytes per int
-
-                for (int i = 0; i < numPoints; i++)
-                {
-                    verticesRaw[i * NUM_FLOATS_PER_VECTOR] = vertices[i].x;
-                    verticesRaw[i * NUM_FLOATS_PER_VECTOR + 1] = vertices[i].y;
-                    verticesRaw[i * NUM_FLOATS_PER_VECTOR + 2] = vertices[i].z;
-                }
-
-                Buffer.BlockCopy(verticesRaw, 0, webRTCData, index, numPoints * NUM_FLOATS_PER_VECTOR * NUM_BYTES_PER_FLOAT);
-                index += numPoints * NUM_FLOATS_PER_VECTOR * NUM_BYTES_PER_FLOAT;
-
-                for (int i = 0; i < numPoints; i++)
-                {
-                    webRTCData[index] = colors[i].b;
-                    index++; // Only one byte per field
-                    webRTCData[index] = colors[i].g;
-                    index++;
-                    webRTCData[index] = colors[i].r;
-                    index++;
-                    webRTCData[index] = colors[i].a;
-                    index++;
-                }
-                
-                webRTCDataBufferIndex = 0;
-                canUpdatePointCloud = true;
-                Debug.LogError("Entered fourth");
-            }
+            Argb32VideoFrame testFrame = new Argb32VideoFrame();
+            testFrame.data = _testImageDataBuffer;
+            testFrame.width = (uint) _testImage.WidthPixels;
+            testFrame.height = (uint) _testImage.HeightPixels;
+            testFrame.stride = _testImage.StrideBytes;
+            
+            request.CompleteRequest(testFrame);
         }
 
         //Stop Kinect as soon as this object disappear
