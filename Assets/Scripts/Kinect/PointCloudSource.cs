@@ -37,6 +37,8 @@ namespace DKDevelopment.AzureKinect.Server
         private Transformation transformation;
 
         private Vector3[] xyTable;
+        private int _width;
+        private int _height;
         
         private Image _colorImage;
         private Image _depthImage;
@@ -113,18 +115,18 @@ namespace DKDevelopment.AzureKinect.Server
         private void InitMesh()
         {
             //Get the width and height of the Depth image and calculate the number of all points
-            int width = kinect.GetCalibration().DepthCameraCalibration.ResolutionWidth;
-            int height = kinect.GetCalibration().DepthCameraCalibration.ResolutionHeight;
-            numPoints = width * height;
+            _width = kinect.GetCalibration().DepthCameraCalibration.ResolutionWidth;
+            _height = kinect.GetCalibration().DepthCameraCalibration.ResolutionHeight;
+            numPoints = _width * _height;
 
             xyTable = new Vector3[numPoints];
 
             System.Numerics.Vector2 point = System.Numerics.Vector2.Zero;
-            for (int y = 0, index = 0; y < height; y++)
+            for (int y = 0, index = 0; y < _height; y++)
             {
                 point.Y = y;
 
-                for (int x = 0; x < width; x++, index++)
+                for (int x = 0; x < _width; x++, index++)
                 {
                     point.X = x;
 
@@ -167,8 +169,8 @@ namespace DKDevelopment.AzureKinect.Server
 
             gameObject.GetComponent<MeshFilter>().mesh = mesh;
             
-            _imageIntArray = new int[width * height * 2];
-            _imageDataBuffer = Marshal.AllocHGlobal(width * height * 4 * 2);
+            _imageIntArray = new int[_width * _height * 2];
+            _imageDataBuffer = Marshal.AllocHGlobal(_width * _height * 4 * 2);
         }
 
         private async Task KinectLoop()
@@ -182,15 +184,14 @@ namespace DKDevelopment.AzureKinect.Server
                     BGRA[] colorArray = _colorImage.GetPixels<BGRA>().ToArray();
 
                     //Getting vertices of point cloud
-                    _depthImage = capture.Depth.Reference();
+                    Image xyzImage = transformation.DepthImageToPointCloud(capture.Depth);
+                    Short3[] xyzArray = xyzImage.GetPixels<Short3>().ToArray();
 
                     for (int i = 0; i < numPoints; i++)
                     {
-                        int row = i / _depthImage.WidthPixels;
-                        int col = i % _depthImage.WidthPixels;
-                        vertices[i].x = xyTable[i].x * _depthImage.GetPixel<UInt16>(row, col) * 0.001f;
-                        vertices[i].y = xyTable[i].y * _depthImage.GetPixel<UInt16>(row, col) * -0.001f;
-                        vertices[i].z = _depthImage.GetPixel<UInt16>(row, col) * 0.001f;
+                        vertices[i].x = xyzArray[i].X * 0.001f;
+                        vertices[i].y = xyzArray[i].Y * -0.001f;
+                        vertices[i].z = xyzArray[i].Z * 0.001f;
 
                         colors[i].b = colorArray[i].B;
                         colors[i].g = colorArray[i].G;
@@ -202,13 +203,16 @@ namespace DKDevelopment.AzureKinect.Server
                     mesh.colors32 = colors;
                     mesh.RecalculateBounds();
 
-                    for (int i = 0; i < _colorImage.HeightPixels; i++)
+                    UInt16[] depthArray = capture.Depth.GetPixels<UInt16>().ToArray();
+
+                    for (int i = 0; i < _height; i++)
                     {
-                        for (int j = 0; j < _colorImage.WidthPixels; j++)
+                        for (int j = 0; j < _width; j++)
                         {
-                            _imageIntArray[i * _colorImage.WidthPixels * 2 + j] = _colorImage.GetPixel<BGRA>(i, j).Value; // _colorImage.GetPixel<BGRA>(i, j).Value
-                            int depthValue = (int) _depthImage.GetPixel<UInt16>(i, j); // ARGB = 0XYZ;
-                            _imageIntArray[i * _colorImage.WidthPixels * 2 + j + _colorImage.WidthPixels] = depthValue << 16;
+                            _imageIntArray[i * _width * 2 + j] = colorArray[i * _width + j].Value;
+                            
+                            int depthValue = (int) depthArray[i * _width + j];
+                            _imageIntArray[i * _width * 2 + j + _width] = depthValue;
                         }
                     }
                     
@@ -219,18 +223,16 @@ namespace DKDevelopment.AzureKinect.Server
 
         protected override void OnFrameRequested(in FrameRequest request)
         {
-            if (_colorImage == null || _depthImage == null)
+            if (_colorImage == null)
                 return;
 
             Argb32VideoFrame frame = new Argb32VideoFrame();
             frame.data = _imageDataBuffer;
-            frame.width = (uint) _colorImage.WidthPixels * 2;
-            frame.height = (uint) _colorImage.HeightPixels;
+            frame.width = (uint) _width * 2;
+            frame.height = (uint) _height;
             frame.stride = _colorImage.StrideBytes * 2;
             
             request.CompleteRequest(frame);
         }
-
-
     }
 }
