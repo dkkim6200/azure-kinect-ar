@@ -455,7 +455,18 @@ MonoBehaviour:
   IceCredential: 
   OnInitialized:
     m_PersistentCalls:
-      m_Calls: []
+      m_Calls:
+      - m_Target: {fileID: 652584673}
+        m_MethodName: OnWebRTCInitialized
+        m_Mode: 1
+        m_Arguments:
+          m_ObjectArgument: {fileID: 0}
+          m_ObjectArgumentAssemblyTypeName: UnityEngine.Object, UnityEngine
+          m_IntArgument: 0
+          m_FloatArgument: 0
+          m_StringArgument: 
+          m_BoolArgument: 0
+        m_CallState: 2
   OnShutdown:
     m_PersistentCalls:
       m_Calls: []
@@ -466,7 +477,7 @@ MonoBehaviour:
   - _mediaKind: 1
     _source: {fileID: 652584673}
     _receiver: {fileID: 0}
-    _senderTrackName: 
+    _senderTrackName: kinect_track
 --- !u!4 &722794975
 Transform:
   m_ObjectHideFlags: 0

@@ -13,13 +13,19 @@ namespace DKDevelopment.AzureKinect.Server
 {
     public class PointCloudSource : CustomVideoSource<Argb32VideoFrameStorage>
     {
-        private static readonly int NUM_FLOATS_PER_VECTOR = 3;
-        private static readonly int NUM_BYTES_PER_COLOR = 4;
         private static readonly int NUM_BYTES_PER_FLOAT = 4;
-        private static readonly int WEBRTC_MESSAGE_SIZE = 131264; // Real limit is 262528
+        private static readonly int WEBRTC_MESSAGE_SIZE = 131264;
+        private static readonly int MAX_FRAGMENTS = 50;
+        private static readonly byte MESSAGE_ENDING_INDICATOR = 0x42;
 
         public Microsoft.MixedReality.WebRTC.Unity.PeerConnection _peerConnection;
         private Microsoft.MixedReality.WebRTC.DataChannel _dataChannel;
+        private float _bufferLimit = Single.PositiveInfinity;
+        private float _currentBufferedAmount;
+        private byte[] _webRTCData;
+        private int _webRTCDataBufferIndex = 0;
+        private byte[] _fragBuffer;
+        private bool _xyTableTransmissionFinished;
 
         //Variable for handling Kinect
         private Device kinect;
@@ -36,7 +42,7 @@ namespace DKDevelopment.AzureKinect.Server
         //Class for coordinate transformation(e.g.Color-to-depth, depth-to-xyz, etc.)
         private Transformation transformation;
 
-        private Vector3[] xyTable;
+        private Vector3[] _xyTable;
         private int _width;
         private int _height;
         
@@ -53,6 +59,7 @@ namespace DKDevelopment.AzureKinect.Server
             InitKinect();
             //Initialization for point cloud rendering
             InitMesh();
+            InitWebRTC();
         }
 
         private void OnDestroy()
@@ -61,18 +68,39 @@ namespace DKDevelopment.AzureKinect.Server
             Marshal.FreeHGlobal(_imageDataBuffer);
         }
 
+        private void Update()
+        {
+            if (!_xyTableTransmissionFinished
+             && _dataChannel != null
+             && _dataChannel.State == Microsoft.MixedReality.WebRTC.DataChannel.ChannelState.Open)
+            {
+                SendXYTable();
+            }
+        }
+
         public void StartKinect()
         {
-            _peerConnection.Peer.DataChannelAdded += OnDataChannelAdded;
-
             //Loop to get data from Kinect and rendering
             Task t = KinectLoop();
+        }
+
+        public void OnWebRTCInitialized()
+        {
+            _peerConnection.Peer.DataChannelAdded += OnDataChannelAdded;
         }
 
         public void OnDataChannelAdded(Microsoft.MixedReality.WebRTC.DataChannel channel)
         {
             _dataChannel = channel;
+            _dataChannel.BufferingChanged += OnBufferingChanged;
             Debug.Log("OnDataChannelAdded");
+        }
+
+        private void OnBufferingChanged(ulong previous, ulong current, ulong limit)
+        {
+            _currentBufferedAmount = current;
+            _bufferLimit = limit;
+            Debug.LogError("OnBufferingChanged");
         }
 
         private static (uint, uint) GetDepthModeRange(DepthMode depthMode)
@@ -119,7 +147,7 @@ namespace DKDevelopment.AzureKinect.Server
             _height = kinect.GetCalibration().DepthCameraCalibration.ResolutionHeight;
             numPoints = _width * _height;
 
-            xyTable = new Vector3[numPoints];
+            _xyTable = new Vector3[numPoints];
 
             System.Numerics.Vector2 point = System.Numerics.Vector2.Zero;
             for (int y = 0, index = 0; y < _height; y++)
@@ -134,15 +162,15 @@ namespace DKDevelopment.AzureKinect.Server
 
                     if (transformedPoint != null)
                     {
-                        xyTable[index].x = transformedPoint.Value.X;
-                        xyTable[index].y = transformedPoint.Value.Y;
-                        xyTable[index].z = transformedPoint.Value.Z;
+                        _xyTable[index].x = transformedPoint.Value.X;
+                        _xyTable[index].y = transformedPoint.Value.Y;
+                        _xyTable[index].z = transformedPoint.Value.Z;
                     }
                     else
                     {
-                        xyTable[index].x = 0f;
-                        xyTable[index].y = 0f;
-                        xyTable[index].z = 0f;
+                        _xyTable[index].x = 0f;
+                        _xyTable[index].y = 0f;
+                        _xyTable[index].z = 0f;
                     }
                 }
             }
@@ -171,6 +199,29 @@ namespace DKDevelopment.AzureKinect.Server
             
             _imageIntArray = new int[_width * _height * 2];
             _imageDataBuffer = Marshal.AllocHGlobal(_width * _height * 4 * 2);
+        }
+
+        private void InitWebRTC()
+        {
+            // 8 + (numPoints * NUM_FLOATS_PER_VECTOR * NUM_BYTES_PER_FLOAT) + (numPoints * NUM_BYTES_PER_COLOR)
+            _webRTCData = new byte[WEBRTC_MESSAGE_SIZE * MAX_FRAGMENTS];
+            _fragBuffer = new byte[WEBRTC_MESSAGE_SIZE];
+
+            int index = 0;
+
+            BitConverter.GetBytes(_width).CopyTo(_webRTCData, index);
+            BitConverter.GetBytes(_height).CopyTo(_webRTCData, index);
+            index += NUM_BYTES_PER_FLOAT * 2;
+
+            for (int i = 0; i < _width * _height; i++)
+            {
+                BitConverter.GetBytes(_xyTable[i].x).CopyTo(_webRTCData, index);
+                index += NUM_BYTES_PER_FLOAT;
+                BitConverter.GetBytes(_xyTable[i].y).CopyTo(_webRTCData, index);
+                index += NUM_BYTES_PER_FLOAT;
+                BitConverter.GetBytes(_xyTable[i].z).CopyTo(_webRTCData, index);
+                index += NUM_BYTES_PER_FLOAT;
+            }
         }
 
         private async Task KinectLoop()
@@ -233,6 +284,28 @@ namespace DKDevelopment.AzureKinect.Server
             frame.stride = _colorImage.StrideBytes * 2;
             
             request.CompleteRequest(frame);
+        }
+
+        private void SendXYTable()
+        {
+            if (_webRTCDataBufferIndex < _xyTable.Length * NUM_BYTES_PER_FLOAT * 3)
+            {
+                if (_currentBufferedAmount + WEBRTC_MESSAGE_SIZE < _bufferLimit)
+                {
+                    Buffer.BlockCopy(_webRTCData, _webRTCDataBufferIndex, _fragBuffer, 0, WEBRTC_MESSAGE_SIZE);
+                    _dataChannel.SendMessage(_fragBuffer);
+                    _webRTCDataBufferIndex += WEBRTC_MESSAGE_SIZE;
+                }
+
+                return;
+            }
+            
+            if (_webRTCDataBufferIndex != 0)
+            {
+                byte[] endIndicator = { 0x42 };
+                _dataChannel.SendMessage(endIndicator);
+                _xyTableTransmissionFinished = true;
+            }
         }
     }
 }
