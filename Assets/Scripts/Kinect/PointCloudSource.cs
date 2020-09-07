@@ -210,8 +210,9 @@ namespace DKDevelopment.AzureKinect.Server
             int index = 0;
 
             BitConverter.GetBytes(_width).CopyTo(_webRTCData, index);
+            index += NUM_BYTES_PER_FLOAT;
             BitConverter.GetBytes(_height).CopyTo(_webRTCData, index);
-            index += NUM_BYTES_PER_FLOAT * 2;
+            index += NUM_BYTES_PER_FLOAT;
 
             for (int i = 0; i < _width * _height; i++)
             {
@@ -262,14 +263,96 @@ namespace DKDevelopment.AzureKinect.Server
                         {
                             _imageIntArray[i * _width * 2 + j] = colorArray[i * _width + j].Value;
                             
-                            int depthValue = (int) depthArray[i * _width + j];
-                            _imageIntArray[i * _width * 2 + j + _width] = depthValue;
+                            int depthValueInMillimeter = (int) depthArray[i * _width + j];
+                            (uint minDepth, uint maxDepth) = GetDepthModeRange(DepthMode.NFOV_Unbinned);
+
+                            float hueAngle = (float) (depthValueInMillimeter - minDepth) / (float) (maxDepth - minDepth) * 360f;
+                            BGRA outputColor = HSVToRGB(hueAngle, 1.0f, 1.0f);
+                            _imageIntArray[i * _width * 2 + j + _width] = outputColor.Value;
                         }
                     }
                     
                     Marshal.Copy(_imageIntArray, 0, _imageDataBuffer, _imageIntArray.Length);
                 }
             }
+        }
+
+        /// <summary>
+        /// From https://www.programmingalgorithms.com/algorithm/hsv-to-rgb/
+        /// </summary>
+        /// <param name="h">Hue</param>
+        /// <param name="s">Saturation</param>
+        /// <param name="v">Value</param>
+        /// <returns>An RGBA equivalent color with alpha set to 255.</returns>
+        public static BGRA HSVToRGB(float h, float s, float v)
+        {
+            float r = 0, g = 0, b = 0;
+
+            if (s == 0)
+            {
+                r = v;
+                g = v;
+                b = v;
+            }
+            else
+            {
+                int i;
+                float f, p, q, t;
+
+                if (h == 360)
+                    h = 0;
+                else
+                    h = h / 60;
+
+                i = (int)Math.Truncate(h);
+                f = h - i;
+
+                p = v * (1.0f - s);
+                q = v * (1.0f - (s * f));
+                t = v * (1.0f - (s * (1.0f - f)));
+
+                switch (i)
+                {
+                    case 0:
+                        r = v;
+                        g = t;
+                        b = p;
+                        break;
+
+                    case 1:
+                        r = q;
+                        g = v;
+                        b = p;
+                        break;
+
+                    case 2:
+                        r = p;
+                        g = v;
+                        b = t;
+                        break;
+
+                    case 3:
+                        r = p;
+                        g = q;
+                        b = v;
+                        break;
+
+                    case 4:
+                        r = t;
+                        g = p;
+                        b = v;
+                        break;
+
+                    default:
+                        r = v;
+                        g = p;
+                        b = q;
+                        break;
+                }
+
+            }
+
+            return new BGRA((byte)(b * 255), (byte)(g * 255), (byte)(r * 255), 255);
         }
 
         protected override void OnFrameRequested(in FrameRequest request)
