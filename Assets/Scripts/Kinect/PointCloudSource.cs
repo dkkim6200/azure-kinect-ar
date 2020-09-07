@@ -239,11 +239,13 @@ namespace DKDevelopment.AzureKinect.Server
                     Image xyzImage = transformation.DepthImageToPointCloud(capture.Depth);
                     Short3[] xyzArray = xyzImage.GetPixels<Short3>().ToArray();
 
+                    UInt16[] depthArray = capture.Depth.GetPixels<UInt16>().ToArray();
+
                     for (int i = 0; i < numPoints; i++)
                     {
-                        vertices[i].x = xyzArray[i].X * 0.001f;
-                        vertices[i].y = xyzArray[i].Y * -0.001f;
-                        vertices[i].z = xyzArray[i].Z * 0.001f;
+                        vertices[i].x = _xyTable[i].x * depthArray[i] * 0.001f;
+                        vertices[i].y = _xyTable[i].y * depthArray[i] * -0.001f;
+                        vertices[i].z = depthArray[i] * 0.001f;
 
                         colors[i].b = colorArray[i].B;
                         colors[i].g = colorArray[i].G;
@@ -254,8 +256,6 @@ namespace DKDevelopment.AzureKinect.Server
                     mesh.vertices = vertices;
                     mesh.colors32 = colors;
                     mesh.RecalculateBounds();
-
-                    UInt16[] depthArray = capture.Depth.GetPixels<UInt16>().ToArray();
 
                     for (int i = 0; i < _height; i++)
                     {
