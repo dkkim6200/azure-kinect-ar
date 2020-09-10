@@ -1,4 +1,6 @@
-﻿Shader "Unlit/YUV2RGBUnlit"
+﻿// Upgrade NOTE: replaced '_Object2World' with 'unity_ObjectToWorld'
+
+Shader "Unlit/YUV2RGBUnlit"
 {
     Properties
     {
@@ -15,6 +17,7 @@
         [HideInEditor] _Fy("Fy", Float) = 0
         [HideInEditor] _MinDepth("MinDepth", Float) = 0
         [HideInEditor] _MaxDepth("MaxDepth", Float) = 0
+        _PointScale("Point Scale", Float) = 1
     }
     SubShader
     {
@@ -38,14 +41,13 @@
             {
                 float4 vertex : POSITION;
                 float2 uv : TEXCOORD0;
+                float2 uv2 : TEXCOORD1;
                 uint   id : SV_VertexID;
-                float4 color : COLOR;
                 UNITY_VERTEX_INPUT_INSTANCE_ID
             };
 
             struct v2f
             {
-                float2 uv : TEXCOORD0;
                 float4 vertex : SV_POSITION;
                 float4 color : COLOR;
                 UNITY_VERTEX_OUTPUT_STEREO
@@ -94,6 +96,7 @@
             float _Fy;
             float _MinDepth;
             float _MaxDepth;
+            float _PointScale;
 
             half3 yuv2rgb(half3 yuv)
             {
@@ -114,11 +117,10 @@
                 UNITY_SETUP_INSTANCE_ID(v);
                 UNITY_INITIALIZE_OUTPUT(v2f, o);
                 UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(o);
-                o.uv = v.uv;
-
-                float row = v.id / _Width;
+                
+                float row = v.uv.y * _Height;
                 row = floor(row);
-                float col = fmod(v.id, _Width);
+                float col = v.uv.x * _Width;
                 col = floor(col);
 
                 float2 uv_depth;
@@ -136,11 +138,20 @@
 
                 float threshold_check = ceil(saturate(hsv_depth.z - 0.8));
 
+                // float3 center;
+                // center.x = depth * (col - _Cx) / _Fx;
+                // center.y = -depth * (row - _Cy) / _Fy;
+                // center.z = depth;
+
                 v.vertex.x = (depth * (col - _Cx) / _Fx) * threshold_check;
                 v.vertex.y = (-depth * (row - _Cy) / _Fy) * threshold_check;
                 v.vertex.z = (depth) * threshold_check;
 
-                o.vertex = UnityObjectToClipPos(v.vertex);
+                v.vertex.xyz = UnityObjectToViewPos(v.vertex);
+                v.vertex.x += v.uv2.x * _PointScale * threshold_check;
+                v.vertex.y += v.uv2.y * _PointScale * threshold_check;
+
+                o.vertex = mul(UNITY_MATRIX_P, float4(v.vertex.xyz, 1.0));
 
                 float2 uv_color;
                 uv_color.x = (col / _Width) * 0.5;

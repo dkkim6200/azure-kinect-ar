@@ -228,7 +228,7 @@ namespace DKDevelopment.AzureKinect.Server
 
                             float hueAngle = (float) (depthValueInMillimeter - minDepth) / (float) (maxDepth - minDepth) * 360f;
                             BGRA outputColor;
-                            if (depthValueInMillimeter != minDepth)
+                            if (depthValueInMillimeter > minDepth)
                             {
                                 outputColor = HSVToRGB(hueAngle, 1.0f, 1.0f);
                             }

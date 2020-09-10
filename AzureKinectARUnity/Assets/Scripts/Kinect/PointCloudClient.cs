@@ -28,6 +28,7 @@ namespace DKDevelopment.AzureKinect.Client
 
         private static readonly int NUM_BYTES_PER_FLOAT = 4;
         private static readonly int WEBRTC_MESSAGE_SIZE = 24;
+        private static readonly float POINT_SCALE_FACTOR = 0.01f;
 
         private int _numPoints = -1;
         private int _width;
@@ -36,8 +37,6 @@ namespace DKDevelopment.AzureKinect.Client
         private Mesh mesh;
         //Array of coordinates for each point in PointCloud
         private Vector3[] _vertices;
-        //Array of colors corresponding to each point in PointCloud
-        private Color32[] _colors;
         //List of indexes of points to be rendered
         private int[] _indices;
 
@@ -127,41 +126,6 @@ namespace DKDevelopment.AzureKinect.Client
             }
         }
 
-        public static (float hue, float value) RGBToHSV(Color32 rgb)
-        {
-            float delta, min;
-            float h = 0, s, v;
-
-            min = Math.Min(Math.Min(rgb.r, rgb.g), rgb.b);
-            v = Math.Max(Math.Max(rgb.r, rgb.g), rgb.b);
-            delta = v - min;
-
-            if (v == 0.0f)
-                s = 0;
-            else
-                s = delta / v;
-
-            if (s == 0)
-                h = 0.0f;
-
-            else
-            {
-                if (rgb.r == v)
-                    h = (rgb.g - rgb.b) / delta;
-                else if (rgb.g == v)
-                    h = 2 + (rgb.b - rgb.r) / delta;
-                else if (rgb.b == v)
-                    h = 4 + (rgb.r - rgb.g) / delta;
-
-                h *= 60;
-
-                if (h < 0.0f)
-                    h = h + 360;
-            }
-
-            return (h, (v / 255));
-        }
-
         private void InitPointCloud()
         {
             _numPoints = _width * _height;
@@ -170,32 +134,104 @@ namespace DKDevelopment.AzureKinect.Client
             mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
 
             //Allocation of vertex and color storage space for the total number of pixels in the depth image
-            _vertices = new Vector3[_numPoints + 8];
-            _colors = new Color32[_numPoints];
-            _indices = new int[_numPoints];
+            _vertices = new Vector3[(_numPoints + 8) * 3];
+            Vector2[] uv = new Vector2[(_numPoints + 8) * 3];
+            Vector2[] uv2 = new Vector2[(_numPoints + 8) * 3];
+            Vector3[] normals = new Vector3[(_numPoints + 8) * 3];
+            _indices = new int[(_numPoints + 8) * 3];
 
             // Setting the bounds to ensure frustrum culling doesn't cull the displaced vertices from the shader
             (float minDepth, float maxDepth) = GetDepthModeRange(DepthMode.NFOV_Unbinned);
             maxDepth *= 0.001f;
-            _vertices[_numPoints] = new Vector3(maxDepth * (-cx) / fx, maxDepth * (-cy) / fy, maxDepth);
-            _vertices[_numPoints + 1] = new Vector3(maxDepth * (_width-cx) / fx, maxDepth * (-cy) / fy, maxDepth);
-            _vertices[_numPoints + 2] = new Vector3(maxDepth * (_width-cx) / fx, maxDepth * (_height-cy) / fy, maxDepth);
-            _vertices[_numPoints + 3] = new Vector3(maxDepth * (-cx) / fx, maxDepth * (_height-cy) / fy, maxDepth);
-            _vertices[_numPoints + 4] = new Vector3(maxDepth * (-cx) / fx, maxDepth * (-cy) / fy, 0);
-            _vertices[_numPoints + 5] = new Vector3(maxDepth * (_width-cx) / fx, maxDepth * (-cy) / fy, 0);
-            _vertices[_numPoints + 6] = new Vector3(maxDepth * (_width-cx) / fx, maxDepth * (_height-cy) / fy, 0);
-            _vertices[_numPoints + 7] = new Vector3(maxDepth * (-cx) / fx, maxDepth * (_height-cy) / fy, 0);
 
-            //Initialization of index list
-            for (int i = 0; i < _numPoints; i++)
+            _vertices[_numPoints * 3] = new Vector3(maxDepth * (-cx) / fx, maxDepth * (-cy) / fy, maxDepth);
+            _vertices[_numPoints * 3 + 1] = new Vector3(maxDepth * (-cx) / fx, maxDepth * (-cy) / fy, maxDepth);
+            _vertices[_numPoints * 3 + 2] = new Vector3(maxDepth * (-cx) / fx, maxDepth * (-cy) / fy, maxDepth);
+
+            _vertices[_numPoints * 3 + 3] = new Vector3(maxDepth * (_width-cx) / fx, maxDepth * (-cy) / fy, maxDepth);
+            _vertices[_numPoints * 3 + 4] = new Vector3(maxDepth * (_width-cx) / fx, maxDepth * (-cy) / fy, maxDepth);
+            _vertices[_numPoints * 3 + 5] = new Vector3(maxDepth * (_width-cx) / fx, maxDepth * (-cy) / fy, maxDepth);
+
+            _vertices[_numPoints * 3 + 6] = new Vector3(maxDepth * (_width-cx) / fx, maxDepth * (_height-cy) / fy, maxDepth);
+            _vertices[_numPoints * 3 + 7] = new Vector3(maxDepth * (_width-cx) / fx, maxDepth * (_height-cy) / fy, maxDepth);
+            _vertices[_numPoints * 3 + 8] = new Vector3(maxDepth * (_width-cx) / fx, maxDepth * (_height-cy) / fy, maxDepth);
+
+            _vertices[_numPoints * 3 + 9] = new Vector3(maxDepth * (-cx) / fx, maxDepth * (_height-cy) / fy, maxDepth);
+            _vertices[_numPoints * 3 + 10] = new Vector3(maxDepth * (-cx) / fx, maxDepth * (_height-cy) / fy, maxDepth);
+            _vertices[_numPoints * 3 + 11] = new Vector3(maxDepth * (-cx) / fx, maxDepth * (_height-cy) / fy, maxDepth);
+
+            _vertices[_numPoints * 3 + 12] = new Vector3(maxDepth * (-cx) / fx, maxDepth * (-cy) / fy, 0);
+            _vertices[_numPoints * 3 + 13] = new Vector3(maxDepth * (-cx) / fx, maxDepth * (-cy) / fy, 0);
+            _vertices[_numPoints * 3 + 14] = new Vector3(maxDepth * (-cx) / fx, maxDepth * (-cy) / fy, 0);
+
+            _vertices[_numPoints * 3 + 15] = new Vector3(maxDepth * (_width-cx) / fx, maxDepth * (-cy) / fy, 0);
+            _vertices[_numPoints * 3 + 16] = new Vector3(maxDepth * (_width-cx) / fx, maxDepth * (-cy) / fy, 0);
+            _vertices[_numPoints * 3 + 17] = new Vector3(maxDepth * (_width-cx) / fx, maxDepth * (-cy) / fy, 0);
+
+            _vertices[_numPoints * 3 + 18] = new Vector3(maxDepth * (_width-cx) / fx, maxDepth * (_height-cy) / fy, 0);
+            _vertices[_numPoints * 3 + 19] = new Vector3(maxDepth * (_width-cx) / fx, maxDepth * (_height-cy) / fy, 0);
+            _vertices[_numPoints * 3 + 20] = new Vector3(maxDepth * (_width-cx) / fx, maxDepth * (_height-cy) / fy, 0);
+
+            _vertices[_numPoints * 3 + 21] = new Vector3(maxDepth * (-cx) / fx, maxDepth * (_height-cy) / fy, 0);
+            _vertices[_numPoints * 3 + 22] = new Vector3(maxDepth * (-cx) / fx, maxDepth * (_height-cy) / fy, 0);
+            _vertices[_numPoints * 3 + 23] = new Vector3(maxDepth * (-cx) / fx, maxDepth * (_height-cy) / fy, 0);
+
+            for (int i = _numPoints * 3; i < _numPoints * 3 + 24; i++)
             {
+                uv[i] = new Vector2(0, 0);
                 _indices[i] = i;
+                normals[i] = new Vector3(0, 1, 0);
+
+                if (i % 3 == 0)
+                {
+                    uv2[i] = new Vector2(-POINT_SCALE_FACTOR, 0);
+                }
+                else if (i % 3 == 1)
+                {
+                    uv2[i] = new Vector2(POINT_SCALE_FACTOR, 0);
+                }
+                else if (i % 3 == 2)
+                {
+                    uv2[i] = new Vector2(0, 1.732f * POINT_SCALE_FACTOR);
+                }
+            }
+
+            //Initialization of uv and normal 
+            int index = 0;
+            for (int y = 0; y < _height; y++)
+            {
+                for (int x = 0; x < _width; x++)
+                {
+                    for (int tri = 0; tri < 3; tri++)
+                    {
+                        uv[index] = new Vector2(((float)(x + 0.5f) / (float)(_width)), ((float)(y + 0.5f) / ((float)(_height))));
+                        _indices[index] = index;
+                        normals[index] = new Vector3(0, 1, 0);
+
+                        if (index % 3 == 0)
+                        {
+                            uv2[index] = new Vector2(POINT_SCALE_FACTOR, 0);
+                        }
+                        else if (index % 3 == 1)
+                        {
+                            uv2[index] = new Vector2(-POINT_SCALE_FACTOR, 0);
+                        }
+                        else if (index % 3 == 2)
+                        {
+                            uv2[index] = new Vector2(0, 1.732f * POINT_SCALE_FACTOR);
+                        }
+
+                        index++;
+                    }
+                }
             }
 
             //Allocate a list of point coordinates, colors, and points to be drawn to mesh
             mesh.vertices = _vertices;
-            mesh.colors32 = _colors;
-            mesh.SetIndices(_indices, MeshTopology.Points, 0);
+            mesh.uv = uv;
+            mesh.uv2 = uv2;
+            mesh.normals = normals;
+            mesh.SetIndices(_indices, MeshTopology.Triangles, 0);
             mesh.RecalculateBounds();
 
             gameObject.GetComponent<MeshFilter>().mesh = mesh;
