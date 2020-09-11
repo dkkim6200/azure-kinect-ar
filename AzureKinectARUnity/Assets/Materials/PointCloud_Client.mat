@@ -8,7 +8,7 @@ Material:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_Name: PointCloud_Client
-  m_Shader: {fileID: 4800000, guid: 93a36e92716f78d459707d48f9a1f168, type: 3}
+  m_Shader: {fileID: 4800000, guid: 97221665dc0fb5542996a4c054453027, type: 3}
   m_ShaderKeywords: 
   m_LightmapFlags: 4
   m_EnableInstancingVariants: 0

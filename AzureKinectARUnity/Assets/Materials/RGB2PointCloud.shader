@@ -1,6 +1,6 @@
 ﻿// Upgrade NOTE: replaced '_Object2World' with 'unity_ObjectToWorld'
 
-Shader "Unlit/YUV2RGBUnlit"
+Shader "Unlit/RGB2PointCloud"
 {
     Properties
     {
@@ -134,7 +134,7 @@ Shader "Unlit/YUV2RGBUnlit"
                 half3 rgb_depth = yuv2rgb(yuv_depth);
                 half3 hsv_depth = rgb_to_hsv_no_clip(rgb_depth);
 
-                float depth = (hsv_depth.x * (_MaxDepth - _MinDepth) + _MinDepth) * 0.001;
+                float depth = (hsv_depth.x * _MaxDepth) * 0.001;
 
                 float threshold_check = ceil(saturate(hsv_depth.z - 0.8));
 

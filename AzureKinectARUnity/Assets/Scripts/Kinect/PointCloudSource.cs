@@ -25,19 +25,17 @@ namespace DKDevelopment.AzureKinect.Server
         private Device kinect;
         //Number of all points of PointCloud 
         private int numPoints;
-        //Used to draw a set of points
-        private Mesh mesh;
-        //Array of coordinates for each point in PointCloud
-        private Vector3[] vertices;
-        //Array of colors corresponding to each point in PointCloud
-        private Color32[] colors;
-        //List of indexes of points to be rendered
-        private int[] indices;
+        private Color[] rgbImageColors;
+        private Texture2D texture;
+        // Array of depth information in millimeters
+        private float[] depths;
         //Class for coordinate transformation(e.g.Color-to-depth, depth-to-xyz, etc.)
         private Transformation transformation;
 
         private int _width;
         private int _height;
+
+        private Renderer renderer;
         
         private Image _colorImage;
         private Image _depthImage;
@@ -53,7 +51,7 @@ namespace DKDevelopment.AzureKinect.Server
             //The method to initialize Kinect
             InitKinect();
             //Initialization for point cloud rendering
-            InitMesh();
+            InitPointCloud();
             InitWebRTC();
         }
 
@@ -129,34 +127,37 @@ namespace DKDevelopment.AzureKinect.Server
         }
 
         //Prepare to draw point cloud.
-        private void InitMesh()
+        private void InitPointCloud()
         {
             //Get the width and height of the Depth image and calculate the number of all points
             _width = kinect.GetCalibration().DepthCameraCalibration.ResolutionWidth;
             _height = kinect.GetCalibration().DepthCameraCalibration.ResolutionHeight;
             numPoints = _width * _height;
 
-            //Instantiate mesh
-            mesh = new Mesh();
-            mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
-
-            //Allocation of vertex and color storage space for the total number of pixels in the depth image
-            vertices = new Vector3[numPoints];
-            colors = new Color32[numPoints];
-            indices = new int[numPoints];
+            rgbImageColors = new Color[numPoints];
+            texture = new Texture2D(_width, _height, TextureFormat.RGBAFloat, false);
+            depths = new float[numPoints];
 
             //Initialization of index list
             for (int i = 0; i < numPoints; i++)
             {
-                indices[i] = i;
+                rgbImageColors[i] = new Color();
             }
 
-            //Allocate a list of point coordinates, colors, and points to be drawn to mesh
-            mesh.vertices = vertices;
-            mesh.colors32 = colors;
-            mesh.SetIndices(indices, MeshTopology.Points, 0);
+            texture.SetPixels(rgbImageColors);
+            texture.Apply();
 
-            gameObject.GetComponent<MeshFilter>().mesh = mesh;
+            renderer = GetComponent<Renderer>();
+
+            (uint minDepth, uint maxDepth) = GetDepthModeRange(DepthMode.NFOV_Unbinned);
+
+            renderer.material.SetTexture("_MainTex", texture);
+            renderer.material.SetFloat("_ColorWidth", kinect.GetCalibration().ColorCameraCalibration.ResolutionWidth);
+            renderer.material.SetFloat("_ColorHeight", kinect.GetCalibration().ColorCameraCalibration.ResolutionHeight);
+            renderer.material.SetFloat("_DepthWidth", kinect.GetCalibration().ColorCameraCalibration.ResolutionWidth);
+            renderer.material.SetFloat("_DepthHeight", kinect.GetCalibration().ColorCameraCalibration.ResolutionHeight);
+            renderer.material.SetFloat("_MinDepth", minDepth);
+            renderer.material.SetFloat("_MaxDepth", maxDepth);
             
             _imageIntArray = new int[_width * _height * 2];
             _imageDataBuffer = Marshal.AllocHGlobal(_width * _height * 4 * 2);
@@ -192,55 +193,43 @@ namespace DKDevelopment.AzureKinect.Server
                     _colorImage = transformation.ColorImageToDepthCamera(capture);
                     BGRA[] colorArray = _colorImage.GetPixels<BGRA>().ToArray();
 
-                    //Getting vertices of point cloud
-                    Image xyzImage = transformation.DepthImageToPointCloud(capture.Depth);
-                    Short3[] xyzArray = xyzImage.GetPixels<Short3>().ToArray();
-
                     UInt16[] depthArray = capture.Depth.GetPixels<UInt16>().ToArray();
 
                     for (int i = 0; i < numPoints; i++)
                     {
-                        int row = i / _width;
-                        int col = i % _width;
-
-                        vertices[i].x = depthArray[i] * (col - cx) / fx * 0.001f;
-                        vertices[i].y = depthArray[i] * (row - cy) / fy * -0.001f;
-                        vertices[i].z = depthArray[i] * 0.001f;
-
-                        colors[i].b = colorArray[i].B;
-                        colors[i].g = colorArray[i].G;
-                        colors[i].r = colorArray[i].R;
-                        colors[i].a = 255;
+                        rgbImageColors[i].b = (float) colorArray[i].B / 255f;
+                        rgbImageColors[i].g = (float) colorArray[i].G / 255f;
+                        rgbImageColors[i].r = (float) colorArray[i].R / 255f;
+                        rgbImageColors[i].a = (float) depthArray[i];
                     }
 
-                    mesh.vertices = vertices;
-                    mesh.colors32 = colors;
-                    mesh.RecalculateBounds();
+                    texture.SetPixels(rgbImageColors);
+                    texture.Apply();
 
-                    for (int i = 0; i < _height; i++)
-                    {
-                        for (int j = 0; j < _width; j++)
-                        {
-                            _imageIntArray[i * _width * 2 + j] = colorArray[i * _width + j].Value;
+                    // for (int i = 0; i < _height; i++)
+                    // {
+                    //     for (int j = 0; j < _width; j++)
+                    //     {
+                    //         _imageIntArray[i * _width * 2 + j] = colorArray[i * _width + j].Value;
                             
-                            int depthValueInMillimeter = (int) depthArray[i * _width + j];
-                            (uint minDepth, uint maxDepth) = GetDepthModeRange(DepthMode.NFOV_Unbinned);
+                    //         int depthValueInMillimeter = (int) depthArray[i * _width + j];
+                    //         (uint minDepth, uint maxDepth) = GetDepthModeRange(DepthMode.NFOV_Unbinned);
 
-                            float hueAngle = (float) (depthValueInMillimeter - minDepth) / (float) (maxDepth - minDepth) * 360f;
-                            BGRA outputColor;
-                            if (depthValueInMillimeter > minDepth)
-                            {
-                                outputColor = HSVToRGB(hueAngle, 1.0f, 1.0f);
-                            }
-                            else 
-                            {
-                                outputColor = new BGRA(0, 0, 0, 0);
-                            }
-                            _imageIntArray[i * _width * 2 + j + _width] = outputColor.Value;
-                        }
-                    }
+                    //         float hueAngle = (float) (depthValueInMillimeter - minDepth) / (float) (maxDepth - minDepth) * 360f;
+                    //         BGRA outputColor;
+                    //         if (depthValueInMillimeter > minDepth)
+                    //         {
+                    //             outputColor = HSVToRGB(hueAngle, 1.0f, 1.0f);
+                    //         }
+                    //         else 
+                    //         {
+                    //             outputColor = new BGRA(0, 0, 0, 0);
+                    //         }
+                    //         _imageIntArray[i * _width * 2 + j + _width] = outputColor.Value;
+                    //     }
+                    // }
                     
-                    Marshal.Copy(_imageIntArray, 0, _imageDataBuffer, _imageIntArray.Length);
+                    // Marshal.Copy(_imageIntArray, 0, _imageDataBuffer, _imageIntArray.Length);
                 }
             }
         }

@@ -19,8 +19,6 @@ namespace DKDevelopment.AzureKinect.Client
         [Range(0.001f, 120f)]
         public float MaxFramerate = 30f;
 
-        public Shader YUV2RGBConverter;
-
         private Renderer renderer;
 
         private ConcurrentQueue<Action> _mainThreadWorkQueue;
