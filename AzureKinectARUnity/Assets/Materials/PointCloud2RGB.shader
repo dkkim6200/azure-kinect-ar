@@ -3,7 +3,6 @@
     Properties
     {
         _MainTex ("Texture", 2D) = "white" {}
-        _AdjustmentFactor ("Adjustment Factor", Float) = 0
         [HideInEditor] _ColorWidth("Width", Float) = 0
         [HideInEditor] _ColorHeight("Height", Float) = 0
         [HideInEditor] _DepthWidth("Width", Float) = 0
@@ -77,9 +76,6 @@
 
             fixed4 frag (v2f i) : SV_Target
             {
-                // Correct vertical flip
-                i.uv.y *= -1.0;
-
                 float row = i.uv.y;
                 float col = i.uv.x;
 

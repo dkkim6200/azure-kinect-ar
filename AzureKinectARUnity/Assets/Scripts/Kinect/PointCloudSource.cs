@@ -8,6 +8,8 @@ using Microsoft.MixedReality.WebRTC;
 using System;
 using System.Threading;
 using System.Runtime.InteropServices;
+using UnityEngine.Rendering;
+using Unity.Collections;
 
 namespace DKDevelopment.AzureKinect.Server
 {
@@ -15,6 +17,8 @@ namespace DKDevelopment.AzureKinect.Server
     {
         private static readonly int NUM_BYTES_PER_FLOAT = 4;
         private static readonly int WEBRTC_MESSAGE_SIZE = 24;
+
+        public Renderer renderTextureRenderer;
 
         public Microsoft.MixedReality.WebRTC.Unity.PeerConnection _peerConnection;
         private Microsoft.MixedReality.WebRTC.DataChannel _dataChannel;
@@ -36,6 +40,8 @@ namespace DKDevelopment.AzureKinect.Server
         private int _height;
 
         private Renderer renderer;
+        private RenderTexture renderTexture;
+        private Texture2D RGBDTexture;
         
         private Image _colorImage;
         private Image _depthImage;
@@ -45,6 +51,9 @@ namespace DKDevelopment.AzureKinect.Server
         private IntPtr _imageDataBuffer;
 
         private float cx, cy, fx, fy;
+
+        private AsyncGPUReadbackRequest gpuRequest;
+        private bool onDestroyCalled;
 
         private void Start()
         {
@@ -57,6 +66,7 @@ namespace DKDevelopment.AzureKinect.Server
 
         private void OnDestroy()
         {
+            onDestroyCalled = true;
             kinect.StopCameras();
             Marshal.FreeHGlobal(_imageDataBuffer);
         }
@@ -136,6 +146,7 @@ namespace DKDevelopment.AzureKinect.Server
 
             rgbImageColors = new Color[numPoints];
             texture = new Texture2D(_width, _height, TextureFormat.RGBAFloat, false);
+            renderTexture = new RenderTexture(_width * 2, _height, 16, RenderTextureFormat.BGRA32);
             depths = new float[numPoints];
 
             //Initialization of index list
@@ -158,6 +169,9 @@ namespace DKDevelopment.AzureKinect.Server
             renderer.material.SetFloat("_DepthHeight", kinect.GetCalibration().ColorCameraCalibration.ResolutionHeight);
             renderer.material.SetFloat("_MinDepth", minDepth);
             renderer.material.SetFloat("_MaxDepth", maxDepth);
+
+            RGBDTexture = new Texture2D(_width * 2, _height, TextureFormat.ARGB32, false);
+            renderTextureRenderer.material.mainTexture = RGBDTexture;
             
             _imageIntArray = new int[_width * _height * 2];
             _imageDataBuffer = Marshal.AllocHGlobal(_width * _height * 4 * 2);
@@ -206,30 +220,35 @@ namespace DKDevelopment.AzureKinect.Server
                     texture.SetPixels(rgbImageColors);
                     texture.Apply();
 
-                    // for (int i = 0; i < _height; i++)
-                    // {
-                    //     for (int j = 0; j < _width; j++)
-                    //     {
-                    //         _imageIntArray[i * _width * 2 + j] = colorArray[i * _width + j].Value;
-                            
-                    //         int depthValueInMillimeter = (int) depthArray[i * _width + j];
-                    //         (uint minDepth, uint maxDepth) = GetDepthModeRange(DepthMode.NFOV_Unbinned);
-
-                    //         float hueAngle = (float) (depthValueInMillimeter - minDepth) / (float) (maxDepth - minDepth) * 360f;
-                    //         BGRA outputColor;
-                    //         if (depthValueInMillimeter > minDepth)
-                    //         {
-                    //             outputColor = HSVToRGB(hueAngle, 1.0f, 1.0f);
-                    //         }
-                    //         else 
-                    //         {
-                    //             outputColor = new BGRA(0, 0, 0, 0);
-                    //         }
-                    //         _imageIntArray[i * _width * 2 + j + _width] = outputColor.Value;
-                    //     }
-                    // }
+                    Graphics.Blit(texture, renderTexture, renderer.material);
                     
-                    // Marshal.Copy(_imageIntArray, 0, _imageDataBuffer, _imageIntArray.Length);
+                    try {
+                        NativeArray<Color32> requestOutput = new NativeArray<Color32>(_width * _height * 2, Unity.Collections.Allocator.TempJob);
+                        gpuRequest = UnityEngine.Rendering.AsyncGPUReadback.RequestIntoNativeArray<Color32>(ref requestOutput, renderTexture, 0, (request) => {
+                            if (onDestroyCalled)
+                                return;
+
+                            Color32[] RGBDTextureColors = requestOutput.ToArray();
+
+                            for (int i = 0; i < RGBDTextureColors.Length; i++)
+                            {
+                                _imageIntArray[i] = RGBDTextureColors[i].a << 24 | RGBDTextureColors[i].b << 16 | RGBDTextureColors[i].g << 8 | RGBDTextureColors[i].r;
+                            }
+                            Marshal.Copy(_imageIntArray, 0, _imageDataBuffer, _imageIntArray.Length);
+                            
+                            requestOutput.Dispose();
+                        });
+                    }
+                    catch (Exception e)
+                    {
+                        Debug.LogError(e);
+                    }
+
+                    // RenderTexture.active = renderTexture;
+                    // RGBDTexture.ReadPixels(new Rect(0, 0, _width * 2, _height), 0, 0);
+                    // Graphics.CopyTexture(renderTexture, RGBDTexture);
+                    // RGBDTexture.Apply();
+                    // Color32[] RGBDTextureColors = RGBDTexture.GetRawTextureData<Color32>().ToArray();
                 }
             }
         }
