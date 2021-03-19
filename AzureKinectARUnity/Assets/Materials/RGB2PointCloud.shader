@@ -18,6 +18,7 @@ Shader "Unlit/RGB2PointCloud"
         [HideInEditor] _MinDepth("MinDepth", Float) = 0
         [HideInEditor] _MaxDepth("MaxDepth", Float) = 0
         _PointScale("Point Scale", Float) = 1
+        _ThresholdFactor("Threshold Factor", Float) = 0.8
     }
     SubShader
     {
@@ -81,6 +82,10 @@ Shader "Unlit/RGB2PointCloud"
                     else if ( RGB.y == HSV.z ) HSV.x = ( 1.0/3.0) + delRGB.x - delRGB.z;
                     else if ( RGB.z == HSV.z ) HSV.x = ( 2.0/3.0) + delRGB.y - delRGB.x;
                 }
+                HSV.x = clamp(HSV.x, 0, 0.999);
+                HSV.y = clamp(HSV.y, 0, 0.999);
+                HSV.z = clamp(HSV.z, 0, 0.999);
+
                 return (HSV);
             }
 
@@ -97,6 +102,7 @@ Shader "Unlit/RGB2PointCloud"
             float _MinDepth;
             float _MaxDepth;
             float _PointScale;
+            float _ThresholdFactor;
 
             half3 yuv2rgb(half3 yuv)
             {
@@ -105,9 +111,12 @@ Shader "Unlit/RGB2PointCloud"
                 half y_value = yuv[0];
                 half u_value = yuv[1];
                 half v_value = yuv[2];
-                half r = y_value + 1.370705 * (v_value - 0.5);
-                half g = y_value - 0.698001 * (v_value - 0.5) - (0.337633 * (u_value - 0.5));
-                half b = y_value + 1.732446 * (u_value - 0.5);
+                half r = y_value + (1.370705 * (v_value - 0.5));
+                half g = y_value - (0.698001 * (v_value - 0.5)) - (0.337633 * (u_value - 0.5));
+                half b = y_value + (1.732446 * (u_value - 0.5));
+                r = clamp(r, 0, 1);
+                g = clamp(g, 0, 1);
+                b = clamp(b, 0, 1);
                 return half3(r, g, b);
             }
 
@@ -124,8 +133,8 @@ Shader "Unlit/RGB2PointCloud"
                 col = floor(col);
 
                 float2 uv_depth;
-                uv_depth.x = (col / _Width) * 0.5 + 0.5;
-                uv_depth.y = row / _Height;
+                uv_depth.x = v.uv.x * 0.5 + 0.5;
+                uv_depth.y = v.uv.y;
 
                 half3 yuv_depth;
                 yuv_depth.x = tex2Dlod(_YPlane, float4(uv_depth.xy, 0, 0)).r;

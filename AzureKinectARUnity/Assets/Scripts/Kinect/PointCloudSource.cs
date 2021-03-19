@@ -18,8 +18,6 @@ namespace DKDevelopment.AzureKinect.Server
         private static readonly int NUM_BYTES_PER_FLOAT = 4;
         private static readonly int WEBRTC_MESSAGE_SIZE = 24;
 
-        public Renderer renderTextureRenderer;
-
         public Microsoft.MixedReality.WebRTC.Unity.PeerConnection _peerConnection;
         private Microsoft.MixedReality.WebRTC.DataChannel _dataChannel;
         private byte[] _webRTCData;
@@ -41,7 +39,6 @@ namespace DKDevelopment.AzureKinect.Server
 
         private Renderer renderer;
         private RenderTexture renderTexture;
-        private Texture2D RGBDTexture;
         
         private Image _colorImage;
         private Image _depthImage;
@@ -86,10 +83,10 @@ namespace DKDevelopment.AzureKinect.Server
         {
             _dataChannel = channel;
             _dataChannel.StateChanged += (() => {
-                if (_dataChannel.State == DataChannel.ChannelState.Open)
-                {
+                // if (_dataChannel.State == DataChannel.ChannelState.Open)
+                // {
                     SendKinectInitialData();
-                }
+                // }
             });
             Debug.Log("OnDataChannelAdded");
         }
@@ -169,9 +166,6 @@ namespace DKDevelopment.AzureKinect.Server
             renderer.material.SetFloat("_DepthHeight", kinect.GetCalibration().ColorCameraCalibration.ResolutionHeight);
             renderer.material.SetFloat("_MinDepth", minDepth);
             renderer.material.SetFloat("_MaxDepth", maxDepth);
-
-            RGBDTexture = new Texture2D(_width * 2, _height, TextureFormat.ARGB32, false);
-            renderTextureRenderer.material.mainTexture = RGBDTexture;
             
             _imageIntArray = new int[_width * _height * 2];
             _imageDataBuffer = Marshal.AllocHGlobal(_width * _height * 4 * 2);
@@ -243,92 +237,8 @@ namespace DKDevelopment.AzureKinect.Server
                     {
                         Debug.LogError(e);
                     }
-
-                    // RenderTexture.active = renderTexture;
-                    // RGBDTexture.ReadPixels(new Rect(0, 0, _width * 2, _height), 0, 0);
-                    // Graphics.CopyTexture(renderTexture, RGBDTexture);
-                    // RGBDTexture.Apply();
-                    // Color32[] RGBDTextureColors = RGBDTexture.GetRawTextureData<Color32>().ToArray();
                 }
             }
-        }
-
-        /// <summary>
-        /// From https://www.programmingalgorithms.com/algorithm/hsv-to-rgb/
-        /// </summary>
-        /// <param name="h">Hue</param>
-        /// <param name="s">Saturation</param>
-        /// <param name="v">Value</param>
-        /// <returns>An RGBA equivalent color with alpha set to 255.</returns>
-        public static BGRA HSVToRGB(float h, float s, float v)
-        {
-            float r = 0, g = 0, b = 0;
-
-            if (s == 0)
-            {
-                r = v;
-                g = v;
-                b = v;
-            }
-            else
-            {
-                int i;
-                float f, p, q, t;
-
-                if (h == 360)
-                    h = 0;
-                else
-                    h = h / 60;
-
-                i = (int)Math.Truncate(h);
-                f = h - i;
-
-                p = v * (1.0f - s);
-                q = v * (1.0f - (s * f));
-                t = v * (1.0f - (s * (1.0f - f)));
-
-                switch (i)
-                {
-                    case 0:
-                        r = v;
-                        g = t;
-                        b = p;
-                        break;
-
-                    case 1:
-                        r = q;
-                        g = v;
-                        b = p;
-                        break;
-
-                    case 2:
-                        r = p;
-                        g = v;
-                        b = t;
-                        break;
-
-                    case 3:
-                        r = p;
-                        g = q;
-                        b = v;
-                        break;
-
-                    case 4:
-                        r = t;
-                        g = p;
-                        b = v;
-                        break;
-
-                    default:
-                        r = v;
-                        g = p;
-                        b = q;
-                        break;
-                }
-
-            }
-
-            return new BGRA((byte)(b * 255), (byte)(g * 255), (byte)(r * 255), 255);
         }
 
         protected override void OnFrameRequested(in FrameRequest request)

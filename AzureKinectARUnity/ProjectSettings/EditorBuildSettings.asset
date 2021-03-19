@@ -6,8 +6,8 @@ EditorBuildSettings:
   serializedVersion: 2
   m_Scenes:
   - enabled: 1
-    path: Assets/Scenes/PointCloudClient.unity
-    guid: b78e39e61185bcc47ad078078a6fdefc
+    path: Assets/Scenes/PointCloudServer.unity
+    guid: 49962f7a08948c14b97601943aa6bb95
   m_configObjects:
     Unity.XR.WindowsMR.Settings: {fileID: 11400000, guid: e0a6da15c9d4bf2499d9c227d90bd8e7,
       type: 2}
